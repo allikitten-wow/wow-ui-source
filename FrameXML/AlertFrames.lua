@@ -333,6 +333,8 @@ function AlertFrameMixin:OnEvent(event, ...)
 		elseif ( isPersonal and (typeIdentifier == "currency") ) then
 			-- only toast currency for personal loot
 			LootAlertSystem:AddAlert(itemLink, quantity, nil, nil, specID, true, false, lootSource);
+		elseif ( typeIdentifier == "honor" ) then
+			HonorAwardedAlertSystem:AddAlert(quantity);
 		end
 	elseif ( event == "SHOW_PVP_FACTION_LOOT_TOAST" ) then
 		local typeIdentifier, itemLink, quantity, specID, sex, isPersonal, lessAwesome = ...;
@@ -366,10 +368,12 @@ function AlertFrameMixin:OnEvent(event, ...)
 			GarrisonLandingPageMinimapButton.MinimapLoopPulseAnim:Play();
 		end
     elseif ( event == "GARRISON_TALENT_COMPLETE") then
-    	local garrisonType = ...;
-    	local talentID = C_Garrison.GetCompleteTalent(garrisonType);
-    	local talent = C_Garrison.GetTalent(talentID);
-        GarrisonTalentAlertSystem:AddAlert(garrisonType, talent);
+    	local garrisonType, doAlert = ...;
+    	if ( doAlert ) then
+			local talentID = C_Garrison.GetCompleteTalent(garrisonType);
+			local talent = C_Garrison.GetTalent(talentID);
+	        GarrisonTalentAlertSystem:AddAlert(garrisonType, talent);
+		end
 	elseif ( event == "GARRISON_MISSION_FINISHED" ) then
 		local followerTypeID, missionID = ...;
 		if ( DoesFollowerMatchCurrentGarrisonType(followerTypeID) ) then
@@ -477,6 +481,7 @@ function AlertFrameMixin:UpdateAnchors()
 end
 
 function AlertFrameMixin:AddAlertFrame(frame)
+	self:UpdateAnchors();
 	frame:Show();
 	frame.animIn:Play();
 	if frame.glow then
@@ -499,19 +504,17 @@ function AlertFrameMixin:AddAlertFrame(frame)
 		frame.waitAndAnimOut.animOut:SetStartDelay(4.05);
 		frame.waitAndAnimOut:Play();
 	end
-
-	self:UpdateAnchors();
 end
 
 -- [[ AlertFrame Utility functions ]] --
 function AlertFrameMixin:BuildLFGRewardData()
 	local rewardData = {};
 
-	local name, typeID, subtypeID, textureFilename, moneyBase, moneyVar, experienceBase, experienceVar, numStrangers, numRewards = GetLFGCompletionReward();
+	local name, typeID, subtypeID, iconTextureFile, moneyBase, moneyVar, experienceBase, experienceVar, numStrangers, numRewards = GetLFGCompletionReward();
 
 	rewardData.name = name;
 	rewardData.subtypeID = subtypeID;
-	rewardData.textureFilename = textureFilename;
+	rewardData.iconTextureFile = iconTextureFile;
 	rewardData.moneyBase = moneyBase;
 	rewardData.moneyVar = moneyVar;
 	rewardData.experienceBase = experienceBase;
@@ -547,7 +550,7 @@ function AlertFrameMixin:BuildScenarioRewardData()
 end
 
 function AlertFrameMixin:BuildQuestData(questID)
-	local _, _, _, taskName = GetTaskInfo(questID);
+	local taskName = C_TaskQuest.GetQuestInfoByQuestID(questID);
 
 	local questData =
 	{

@@ -567,6 +567,37 @@ function PanelTemplates_TabResize(tab, padding, absoluteSize, minWidth, maxWidth
 	end
 end
 
+function PanelTemplates_ResizeTabsToFit(frame, maxWidthForAllTabs)
+	local selectedIndex = PanelTemplates_GetSelectedTab(frame);
+	if ( not selectedIndex ) then
+		return;
+	end
+
+	local currentWidth = 0;
+	local truncatedText = false;
+	for i = 1, frame.numTabs do
+		local tab = GetTabByIndex(frame, i);
+		currentWidth = currentWidth + tab:GetWidth();
+		if tab.Text:IsTruncated() then
+			truncatedText = true;
+		end
+	end
+	if ( not truncatedText and currentWidth <= maxWidthForAllTabs ) then
+		return;
+	end
+
+	local currentTab = GetTabByIndex(frame, selectedIndex);
+	PanelTemplates_TabResize(currentTab, 0);
+	local availableWidth = maxWidthForAllTabs - currentTab:GetWidth();
+	local widthPerTab = availableWidth / (frame.numTabs - 1);
+	for i = 1, frame.numTabs do
+		if ( i ~= selectedIndex ) then
+			local tab = GetTabByIndex(frame, i);
+			PanelTemplates_TabResize(tab, 0, widthPerTab);
+		end
+	end
+end
+
 function PanelTemplates_SetNumTabs(frame, numTabs)
 	frame.numTabs = numTabs;
 end
@@ -705,6 +736,25 @@ function ScrollingEdit_OnUpdate(self, elapsed, scrollFrame)
 	end
 end
 
+function ScrollingEdit_OnTextChanged(self, scrollFrame)
+	-- force an update when the text changes
+	self.handleCursorChange = true;
+	ScrollingEdit_OnUpdate(self, 0, scrollFrame);
+end
+
+function ScrollingEdit_OnLoad(self)
+	ScrollingEdit_SetCursorOffsets(self, 0, 0);
+end
+
+function ScrollingEdit_SetCursorOffsets(self, offset, height)
+	self.cursorOffset = offset;
+	self.cursorHeight = height;
+end
+
+function ScrollingEdit_OnCursorChanged(self, x, y, w, h)
+	ScrollingEdit_SetCursorOffsets(self, y, h);
+	self.handleCursorChange = true;
+end
 
 NumericInputSpinnerMixin = {};
 

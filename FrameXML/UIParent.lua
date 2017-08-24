@@ -155,7 +155,12 @@ WORLD_QUEST_QUALITY_COLORS = {
 	[LE_WORLD_QUEST_QUALITY_EPIC] = ITEM_QUALITY_COLORS[LE_ITEM_QUALITY_EPIC];
 };
 
+-- Protecting from addons since we use this in GetScaledCursorDelta which is used in secure code.
+local _UIParentGetEffectiveScale;
+local _UIParentRef;
 function UIParent_OnLoad(self)
+	_UIParentGetEffectiveScale = self.GetEffectiveScale;
+	_UIParentRef = self;
 	self:RegisterEvent("PLAYER_LOGIN");
 	self:RegisterEvent("PLAYER_DEAD");
 	self:RegisterEvent("SELF_RES_SPELL_CHANGED");
@@ -266,6 +271,7 @@ function UIParent_OnLoad(self)
 
 	-- Events for Artifact UI
 	self:RegisterEvent("ARTIFACT_UPDATE");
+	self:RegisterEvent("ARTIFACT_TIER_CHANGED");
 	self:RegisterEvent("ARTIFACT_RESPEC_PROMPT");
 
 	-- Events for Adventure Map UI
@@ -274,10 +280,6 @@ function UIParent_OnLoad(self)
 	-- Events for taxi benchmarking
 	self:RegisterEvent("ENABLE_TAXI_BENCHMARK");
 	self:RegisterEvent("DISABLE_TAXI_BENCHMARK");
-
-	-- Push to talk
-	self:RegisterEvent("VOICE_PUSH_TO_TALK_START");
-	self:RegisterEvent("VOICE_PUSH_TO_TALK_STOP");
 
 	-- Events for BarberShop Handling
 	self:RegisterEvent("BARBER_SHOP_OPEN");
@@ -313,6 +315,10 @@ function UIParent_OnLoad(self)
 	-- Events for void storage
 	self:RegisterEvent("VOID_STORAGE_OPEN");
 	self:RegisterEvent("VOID_STORAGE_CLOSE");
+
+	-- Events for contributions
+	self:RegisterEvent("CONTRIBUTION_COLLECTOR_OPEN");
+	self:RegisterEvent("CONTRIBUTION_COLLECTOR_CLOSE");
 
 	-- Events for Trial caps
 	self:RegisterEvent("TRIAL_CAP_REACHED_MONEY");
@@ -380,6 +386,13 @@ function UIParent_OnLoad(self)
 
 	-- Invite confirmations
 	self:RegisterEvent("GROUP_INVITE_CONFIRMATION");
+
+	-- Event(s) for the ArtifactUI
+	self:RegisterEvent("ARTIFACT_ENDGAME_REFUND");
+
+	-- Event(s) for PVP
+	self:RegisterEvent("UPDATE_BATTLEFIELD_STATUS");
+	self:RegisterEvent("PVP_BRAWL_INFO_UPDATED");
 end
 
 function UIParent_OnShow(self)
@@ -428,6 +441,10 @@ end
 
 function CombatLog_LoadUI()
 	UIParentLoadAddOn("Blizzard_CombatLog");
+end
+
+function Commentator_LoadUI()
+	UIParentLoadAddOn("Blizzard_Commentator");
 end
 
 function GuildBankFrame_LoadUI()
@@ -579,6 +596,10 @@ end
 
 function FlightMap_LoadUI()
 	UIParentLoadAddOn("Blizzard_FlightMap");
+end
+
+function APIDocumentation_LoadUI()
+	UIParentLoadAddOn("Blizzard_APIDocumentation");
 end
 
 --[[
@@ -798,16 +819,23 @@ function ToggleRaidBrowser()
 	else
 		ShowUIPanel(RaidBrowserFrame);
 	end
-
 end
 
-function ToggleEncounterJournal()
-	if (IsKioskModeEnabled()) then
-		return;
+function CanShowEncounterJournal()
+	if ( IsKioskModeEnabled() ) then
+		return false;
 	end
 
 	if ( not C_AdventureJournal.CanBeShown() ) then
-		return;
+		return false;
+	end
+
+	return true;
+end
+
+function ToggleEncounterJournal()
+	if ( not CanShowEncounterJournal() ) then
+		return false;
 	end
 
 	if ( not EncounterJournal ) then
@@ -815,7 +843,9 @@ function ToggleEncounterJournal()
 	end
 	if ( EncounterJournal ) then
 		ToggleFrame(EncounterJournal);
+		return true;
 	end
+	return false;
 end
 
 
@@ -902,6 +932,35 @@ function InspectUnit(unit)
 	end
 end
 
+local function PlayBattlefieldBanner(self)
+	-- battlefields
+	if ( not self.battlefieldBannerShown ) then
+		local bannerName, bannerDescription;
+
+		if (C_PvP.IsInBrawl()) then
+			local brawlInfo = C_PvP.GetBrawlInfo();
+			if (brawlInfo) then
+				bannerName = brawlInfo.name;
+				bannerDescription = brawlInfo.shortDescription;
+			end
+		else
+		    for i=1, GetMaxBattlefieldID() do
+			    local status, mapName, _, _, _, _, _, _, _, shortDescription, _ = GetBattlefieldStatus(i);
+			    if ( status and status == "active" ) then
+				    bannerName = mapName;
+				    bannerDescription = shortDescription;
+				    break;
+			    end
+		    end
+		end
+
+		if ( bannerName ) then
+			UIParentLoadAddOn("Blizzard_PVPUI");
+			C_Timer.After(1, function() TopBannerManager_Show(PvPObjectiveBannerFrame, { name=bannerName, description=bannerDescription }); end);
+			self.battlefieldBannerShown = true;
+		end
+	end
+end
 
 -- UIParent_OnEvent --
 function UIParent_OnEvent(self, event, ...)
@@ -997,7 +1056,7 @@ function UIParent_OnEvent(self, event, ...)
 			GMChatFrame:Show()
 			local info = ChatTypeInfo["WHISPER"];
 			GMChatFrame:AddMessage(format(GM_CHAT_LAST_SESSION, "|TInterface\\ChatFrame\\UI-ChatIcon-Blizz:12:20:0:0:32:16:4:28:0:16|t "..
-			"|HplayerGM:"..lastTalkedToGM.."|h".."["..lastTalkedToGM.."]".."|h"), info.r, info.g, info.b, info.id);
+				GetGMLink(lastTalkedToGM, "["..lastTalkedToGM.."]")), info.r, info.g, info.b, info.id);
 			GMChatFrameEditBox:SetAttribute("tellTarget", lastTalkedToGM);
 			GMChatFrameEditBox:SetAttribute("chatType", "WHISPER");
 		end
@@ -1184,6 +1243,10 @@ function UIParent_OnEvent(self, event, ...)
 		if ( instanceType == "arena" or instanceType == "pvp") then
 			Arena_LoadUI();
 		end
+		if ( C_Commentator.IsSpectating() ) then
+			Commentator_LoadUI();
+		end
+		
 		if ( UnitIsGhost("player") ) then
 			GhostFrame:Show();
 		else
@@ -1203,7 +1266,7 @@ function UIParent_OnEvent(self, event, ...)
 
 		for i, spellConfirmation in ipairs(spellConfirmations) do
 			if spellConfirmation.spellID then
-				if confirmType == LE_SPELL_CONFIRMATION_PROMPT_TYPE_STATIC_TEXT then
+				if spellConfirmation.confirmType == LE_SPELL_CONFIRMATION_PROMPT_TYPE_STATIC_TEXT then
 					StaticPopup_Show("SPELL_CONFIRMATION_PROMPT", spellConfirmation.text, spellConfirmation.duration, spellConfirmation.spellID);
 				elseif spellConfirmation.confirmType == LE_SPELL_CONFIRMATION_PROMPT_TYPE_SIMPLE_WARNING then
 					StaticPopup_Show("SPELL_CONFIRMATION_WARNING", spellConfirmation.text, nil, spellConfirmation.spellID);
@@ -1221,9 +1284,13 @@ function UIParent_OnEvent(self, event, ...)
 		end
 		OrderHall_CheckCommandBar();
 
+		self.battlefieldBannerShown = nil;
+
 		NPETutorial_AttemptToBegin(event);
 		ClassTrial_AttemptLoad();
 		BoostTutorial_AttemptLoad();
+	elseif ( event == "UPDATE_BATTLEFIELD_STATUS" or event == "PVP_BRAWL_INFO_UPDATED" ) then
+		PlayBattlefieldBanner(self);
 	elseif ( event == "GROUP_ROSTER_UPDATE" ) then
 		-- Hide/Show party member frames
 		RaidOptionsFrame_UpdatePartyFrames();
@@ -1496,7 +1563,10 @@ function UIParent_OnEvent(self, event, ...)
 	elseif ( event == "ARTIFACT_UPDATE" ) then
 		ArtifactFrame_LoadUI();
 		ShowUIPanel(ArtifactFrame);
-
+	elseif ( event == "ARTIFACT_TIER_CHANGED" ) then
+		local newTier, bagOrInventorySlot, slot = ...;
+		ArtifactFrame_LoadUI();
+		ArtifactFrame:OnTierChanged(newTier, bagOrInventorySlot, slot);
 	elseif ( event == "ARTIFACT_RESPEC_PROMPT" ) then
 		ArtifactFrame_LoadUI();
 		ShowUIPanel(ArtifactFrame);
@@ -1506,6 +1576,11 @@ function UIParent_OnEvent(self, event, ...)
 		else
 			StaticPopup_Show("CONFIRM_ARTIFACT_RESPEC", BreakUpLargeNumbers(C_ArtifactUI.GetRespecCost()));
 		end
+
+	elseif ( event == "ARTIFACT_ENDGAME_REFUND" ) then
+		local numRefunded, refundedTier, bagOrInventorySlot = ...;
+		ArtifactFrame_LoadUI();
+		ArtifactFrame:OnTraitsRefunded(numRefunded, refundedTier);
 
 	elseif ( event == "ADVENTURE_MAP_OPEN" ) then
 		OrderHall_LoadUI();
@@ -1574,24 +1649,6 @@ function UIParent_OnEvent(self, event, ...)
 		end
 		local info = ChatTypeInfo["SYSTEM"];
 		DEFAULT_CHAT_FRAME:AddMessage(BENCHMARK_TAXI_MODE_OFF, info.r, info.g, info.b, info.id);
-
-	-- Push to talk
-	elseif ( event == "VOICE_PUSH_TO_TALK_START" and GetVoiceCurrentSessionID() ) then
-		if ( GetCVarBool("PushToTalkSound") ) then
-			PlaySound("VoiceChatOn");
-		end
-		-- Animate the player frame speaker even if not broadcasting
-		if  ( GetCVar("VoiceChatMode") == "0" ) then
-			UIFrameFadeIn(PlayerSpeakerFrame, 0.2, PlayerSpeakerFrame:GetAlpha(), 1);
-		end
-	elseif ( event == "VOICE_PUSH_TO_TALK_STOP" ) then
-		if ( GetCVarBool("PushToTalkSound") and GetVoiceCurrentSessionID() ) then
-			PlaySound("VoiceChatOff");
-		end
-		-- Stop Animation
-		if  ( GetCVar("VoiceChatMode") == "0" and PlayerSpeakerFrame:GetAlpha() > 0 ) then
-			UIFrameFadeOut(PlayerSpeakerFrame, 0.2, PlayerSpeakerFrame:GetAlpha(), 0);
-		end
 	elseif ( event == "LEVEL_GRANT_PROPOSED" ) then
 		StaticPopup_Show("LEVEL_GRANT_PROPOSED", arg1);
 	elseif ( event == "CHAT_MSG_WHISPER" and arg6 == "GM" ) then	--GMChatUI
@@ -1743,24 +1800,7 @@ function UIParent_OnEvent(self, event, ...)
 			QuestChoiceFrame_Show();
 		end
 	elseif ( event == "LUA_WARNING" ) then
-		local warnType, message = ...;
-		debuginfo();
-		LoadAddOn("Blizzard_DebugTools");
-		local loaded = IsAddOnLoaded("Blizzard_DebugTools");
-
-		local cvarName = "scriptWarnings";
-		if ( warnType == LUA_WARNING_TREAT_AS_ERROR ) then
-			cvarName = "scriptErrors";
-		end
-
-		if ( GetCVarBool(cvarName) ) then
-			if ( loaded ) then
-				ScriptErrorsFrame_OnError(message, warnType);
-			end
-		elseif ( loaded ) then
-			local HIDE_ERROR_FRAME = true;
-			ScriptErrorsFrame_OnError(message, warnType, HIDE_ERROR_FRAME);
-		end
+		HandleLuaWarning(...);
 	elseif ( event == "GARRISON_ARCHITECT_OPENED") then
 		if (not GarrisonBuildingFrame) then
 			Garrison_LoadUI();
@@ -1865,6 +1905,13 @@ function UIParent_OnEvent(self, event, ...)
 		UpdateUIParentRelativeToDebugMenu();
 	elseif ( event == "GROUP_INVITE_CONFIRMATION" ) then
 		UpdateInviteConfirmationDialogs();
+	elseif ( event == "CONTRIBUTION_COLLECTOR_OPEN" ) then
+		UIParentLoadAddOn("Blizzard_Contribution");
+		ContributionCollectionUI_Show();
+	elseif (event == "CONTRIBUTION_COLLECTOR_CLOSE" ) then
+		if ( ContributionCollectionUI_Hide ) then
+			ContributionCollectionUI_Hide();
+		end
 	end
 end
 
@@ -1954,7 +2001,7 @@ UIPARENT_MANAGED_FRAME_POSITIONS = {
 	["CastingBarFrame"] = {baseY = true, yOffset = 40, bottomEither = actionBarOffset, overrideActionBar = overrideActionBarTop, petBattleFrame = petBattleTop, bonusActionBar = 1, pet = 1, watchBar = 1, tutorialAlert = 1, playerPowerBarAlt = 1, extraActionBarFrame = 1, ZoneAbilityFrame = 1, talkingHeadFrame = 1, classResourceOverlayFrame = 1, classResourceOverlayOffset = 1};
 	["ClassResourceOverlayParentFrame"] = {baseY = true, yOffset = 0, bottomEither = actionBarOffset, overrideActionBar = overrideActionBarTop, petBattleFrame = petBattleTop, bonusActionBar = 1, pet = 1, watchBar = 1, tutorialAlert = 1, playerPowerBarAlt = 1, extraActionBarFrame = 1, ZoneAbilityFrame = 1 };
 	["PlayerPowerBarAlt"] = UIPARENT_ALTERNATE_FRAME_POSITIONS["PlayerPowerBarAlt_Bottom"];
-	["ExtraActionBarFrame"] = {baseY = true, yOffset = 40, bottomEither = actionBarOffset, overrideActionBar = overrideActionBarTop, petBattleFrame = petBattleTop, bonusActionBar = 1, pet = 1, watchBar = 1, tutorialAlert = 1};
+	["ExtraActionBarFrame"] = {baseY = true, yOffset = 0, bottomEither = actionBarOffset, overrideActionBar = overrideActionBarTop, petBattleFrame = petBattleTop, bonusActionBar = 1, pet = 1, watchBar = 1, tutorialAlert = 1};
 	["ZoneAbilityFrame"] = {baseY = true, yOffset = 100, bottomEither = actionBarOffset, overrideActionBar = overrideActionBarTop, petBattleFrame = petBattleTop, bonusActionBar = 1, pet = 1, watchBar = 1, tutorialAlert = 1, extraActionBarFrame = 1};
 	["ChatFrame1"] = {baseY = true, yOffset = 40, bottomLeft = actionBarOffset-8, justBottomRightAndStance = actionBarOffset, overrideActionBar = overrideActionBarTop, petBattleFrame = petBattleTop, bonusActionBar = 1, pet = 1, watchBar = 1, maxLevel = 1, point = "BOTTOMLEFT", rpoint = "BOTTOMLEFT", xOffset = 32};
 	["ChatFrame2"] = {baseY = true, yOffset = 40, bottomRight = actionBarOffset-8, overrideActionBar = overrideActionBarTop, petBattleFrame = petBattleTop, bonusActionBar = 1, rightLeft = -2*actionBarOffset, rightRight = -actionBarOffset, watchBar = 1, maxLevel = 1, point = "BOTTOMRIGHT", rpoint = "BOTTOMRIGHT", xOffset = -32};
@@ -2821,10 +2868,10 @@ function FramePositionDelegate:UIParentManageFramePositions()
 		local numArenaOpponents = GetNumArenaOpponents();
 		if ( ArenaEnemyFrames and ArenaEnemyFrames:IsShown() and (numArenaOpponents > 0) ) then
 			ObjectiveTrackerFrame:ClearAllPoints();
-			ObjectiveTrackerFrame:SetPoint("TOPRIGHT", "ArenaEnemyFrame"..numArenaOpponents, "BOTTOMRIGHT", 2, -35);
+			ObjectiveTrackerFrame:SetPoint("TOPRIGHT", ArenaEnemyFrames_GetBestAnchorUnitFrameForOppponent(numArenaOpponents), "BOTTOMRIGHT", 2, -35);
 		elseif ( ArenaPrepFrames and ArenaPrepFrames:IsShown() and (numArenaOpponents > 0) ) then
 			ObjectiveTrackerFrame:ClearAllPoints();
-			ObjectiveTrackerFrame:SetPoint("TOPRIGHT", "ArenaPrepFrame"..numArenaOpponents, "BOTTOMRIGHT", 2, -35);
+			ObjectiveTrackerFrame:SetPoint("TOPRIGHT", ArenaPrepFrames_GetBestAnchorUnitFrameForOppponent(numArenaOpponents), "BOTTOMRIGHT", 2, -35);
 		else
 			-- We're using Simple Quest Tracking, automagically size and position!
 			ObjectiveTrackerFrame:ClearAllPoints();
@@ -3613,7 +3660,7 @@ function GetScaledCursorPosition()
 end
 
 function GetScaledCursorDelta()
-	local uiScale = UIParent:GetEffectiveScale();
+	local uiScale = _UIParentGetEffectiveScale(_UIParentRef);
 	local x, y = GetCursorDelta();
 	return x / uiScale, y / uiScale;
 end
@@ -3659,6 +3706,8 @@ function ToggleGameMenu()
 	if ( not UIParent:IsShown() ) then
 		UIParent:Show();
 		SetUIVisibility(true);
+	elseif ( C_Commentator.IsSpectating() and IsFrameLockActive("COMMENTATOR_SPECTATING_MODE") ) then
+		PvPCommentator:SetFrameLock(false);
 	elseif ( ModelPreviewFrame:IsShown() ) then
 		ModelPreviewFrame:Hide();
 	elseif ( StoreFrame_EscapePressed and StoreFrame_EscapePressed() ) then
@@ -3923,33 +3972,45 @@ function UpdateInviteConfirmationDialogs()
 		local suggesterGuid, suggesterName, relationship, isQuickJoin = GetInviteReferralInfo(firstInvite);
 
 		--If we ourselves have a relationship with this player, we'll just act as if they asked through us.
-		local _, color, selfRelationship = SocialQueueUtil_GetNameAndColor(guid);
+		local _, color, selfRelationship, playerLink = SocialQueueUtil_GetNameAndColor(guid, name);
+		local safeLink = playerLink and "["..playerLink.."]" or name;
+
+		if ( isQuickJoin and selfRelationship and GetCVarBool("autoAcceptQuickJoinRequests") ) then
+			RespondToInviteConfirmation(firstInvite, true);
+			return;
+		end
+
 		if ( selfRelationship ) then
 			if ( isQuickJoin ) then
-				text = text..string.format(INVITE_CONFIRMATION_REQUEST_QUICKJOIN, color..name..FONT_COLOR_CODE_CLOSE);
+				text = text..INVITE_CONFIRMATION_REQUEST_QUICKJOIN:format(color..safeLink..FONT_COLOR_CODE_CLOSE);
 			else
-				text = text..string.format(INVITE_CONFIRMATION_REQUEST, color..name..FONT_COLOR_CODE_CLOSE);
+				text = text..INVITE_CONFIRMATION_REQUEST:format(color..name..FONT_COLOR_CODE_CLOSE);
 			end
 		elseif ( suggesterGuid ) then
 			suggesterName = GetSocialColoredName(suggesterName, suggesterGuid);
+
 			if ( relationship == LE_INVITE_CONFIRMATION_RELATION_FRIEND ) then
 				if ( isQuickJoin ) then
-					text = text..string.format(INVITE_CONFIRMATION_REQUEST_FRIEND_QUICKJOIN, suggesterName, name);
+					text = text..INVITE_CONFIRMATION_REQUEST_FRIEND_QUICKJOIN:format(suggesterName, color..safeLink..FONT_COLOR_CODE_CLOSE);
 				else
-					text = text..string.format(INVITE_CONFIRMATION_REQUEST_FRIEND, suggesterName, name);
+					text = text..INVITE_CONFIRMATION_REQUEST_FRIEND:format(suggesterName, name);
 				end
 			elseif ( relationship == LE_INVITE_CONFIRMATION_RELATION_GUILD ) then
 				if ( isQuickJoin ) then
-					text = text..string.format(INVITE_CONFIRMATION_REQUEST_GUILD_QUICKJOIN, suggesterName, name);
+					text = text..string.format(INVITE_CONFIRMATION_REQUEST_GUILD_QUICKJOIN, suggesterName, color..safeLink..FONT_COLOR_CODE_CLOSE);
 				else
 					text = text..string.format(INVITE_CONFIRMATION_REQUEST_GUILD, suggesterName, name);
 				end
 			else
-				text = text..string.format(INVITE_CONFIRMATION_REQUEST, name);
+				if ( isQuickJoin ) then
+					text = text..string.format(INVITE_CONFIRMATION_REQUEST, color..safeLink..FONT_COLOR_CODE_CLOSE);
+				else
+					text = text..string.format(INVITE_CONFIRMATION_REQUEST, name);
+				end
 			end
 		else
 			if ( isQuickJoin ) then
-				text = text..string.format(INVITE_CONFIRMATION_REQUEST_QUICKJOIN, name);
+				text = text..string.format(INVITE_CONFIRMATION_REQUEST_QUICKJOIN, color..safeLink..FONT_COLOR_CODE_CLOSE);
 			else
 				text = text..string.format(INVITE_CONFIRMATION_REQUEST, name);
 			end
@@ -3963,7 +4024,7 @@ function UpdateInviteConfirmationDialogs()
 		text = text..string.format(INVITE_CONFIRMATION_SUGGEST, suggesterName, name);
 	end
 
-	local invalidQueues = GetInviteConfirmationInvalidQueues(firstInvite);
+	local invalidQueues = C_PartyInfo.GetInviteConfirmationInvalidQueues(firstInvite);
 	if ( invalidQueues and #invalidQueues > 0 ) then
 		if ( text ~= "" ) then
 			text = text.."\n\n"
@@ -3987,7 +4048,7 @@ function UpdateInviteConfirmationDialogs()
 end
 
 function UnitHasMana(unit)
-	if ( UnitPowerMax(unit, SPELL_POWER_MANA) > 0 ) then
+	if ( UnitPowerMax(unit, Enum.PowerType.Mana) > 0 ) then
 		return 1;
 	end
 	return nil;
@@ -4434,6 +4495,10 @@ function GMError(...)
 	end
 end
 
+function OnExcessiveErrors()
+	StaticPopup_Show("TOO_MANY_LUA_ERRORS");
+end
+
 function SetLargeGuildTabardTextures(unit, emblemTexture, backgroundTexture, borderTexture, tabardData)
 	-- texure dimensions are 1024x1024, icon dimensions are 64x64
 	local emblemSize, columns, offset;
@@ -4637,6 +4702,10 @@ function ConfirmOrLeaveBattlefield()
 	end
 end
 
+function ConfirmSurrenderArena()
+	StaticPopup_Show("CONFIRM_SURRENDER_ARENA");
+end
+
 function GetCurrentScenarioType()
 	local scenarioType = select(10, C_Scenario.GetInfo());
 	return scenarioType;
@@ -4781,4 +4850,49 @@ function GetDisplayedInviteType(guid)
 end
 
 function nop()
+end
+
+function ShakeFrameRandom(frame, magnitude, duration, frequency)
+	if frequency <= 0 then
+		return;
+	end
+
+	local shake = {};
+	for i = 1, math.ceil(duration / frequency) do
+		local xVariation, yVariation = math.random(-magnitude, magnitude), math.random(-magnitude, magnitude);
+		shake[i] = { x = xVariation, y = yVariation };
+	end
+
+	ShakeFrame(frame, shake, duration, frequency);
+end
+
+function ShakeFrame(frame, shake, maximumDuration, frequency)
+	local point, relativeFrame, relativePoint, x, y = frame:GetPoint();
+	local shakeIndex = 1;
+	local endTime = GetTime() + maximumDuration;
+	frame.shakeTicker = C_Timer.NewTicker(frequency, function()
+		local xVariation, yVariation = shake[shakeIndex].x, shake[shakeIndex].y;
+		frame:SetPoint(point, relativeFrame, relativePoint, x + xVariation, y + yVariation);
+		shakeIndex = shakeIndex + 1;
+		if shakeIndex > #shake or GetTime() >= endTime then
+			frame:SetPoint(point, relativeFrame, relativePoint, x, y);
+			frame.shakeTicker:Cancel();
+		end
+	end);
+end
+
+-- Currency Overflow --
+function WillCurrencyRewardOverflow(currencyID, rewardQuantity)
+	local name, quantity, icon, earnedThisWeek, weeklyMax, maxQuantity, discovered, rarity = GetCurrencyInfo(currencyID);
+	return maxQuantity > 0 and rewardQuantity + quantity > maxQuantity;
+end
+
+function GetColorForCurrencyReward(currencyID, rewardQuantity, defaultColor)
+	if WillCurrencyRewardOverflow(currencyID, rewardQuantity) then
+		return RED_FONT_COLOR;
+	elseif defaultColor then
+		return defaultColor;
+	else
+		return HIGHLIGHT_FONT_COLOR;
+	end
 end

@@ -983,9 +983,9 @@ function ContainerFrame_GetExtendedPriceString(itemButton, isEquipped, quantity)
 		local currencyTexture, currencyQuantity, currencyName = GetContainerItemPurchaseCurrency(bag, slot, i, isEquipped);
 		if ( currencyName ) then
 			if ( itemsString ) then
-				itemsString = itemsString .. ", |TInterface\\Icons\\"..currencyTexture..":0:0:0:-1|t ".. format(CURRENCY_QUANTITY_TEMPLATE, (currencyQuantity or 0) * quantity, currencyName);
+				itemsString = itemsString .. ", |T"..currencyTexture..":0:0:0:-1|t ".. format(CURRENCY_QUANTITY_TEMPLATE, (currencyQuantity or 0) * quantity, currencyName);
 			else
-				itemsString = " |TInterface\\Icons\\"..currencyTexture..":0:0:0:-1|t "..format(CURRENCY_QUANTITY_TEMPLATE, (currencyQuantity or 0) * quantity, currencyName);
+				itemsString = " |T"..currencyTexture..":0:0:0:-1|t "..format(CURRENCY_QUANTITY_TEMPLATE, (currencyQuantity or 0) * quantity, currencyName);
 			end
 		end
 	end
@@ -1080,7 +1080,7 @@ function ContainerFrameItemButton_OnModifiedClick(self, button)
 	if ( IsModifiedClick("SOCKETITEM") ) then
 		SocketContainerItem(self:GetParent():GetID(), self:GetID());
 	end
-	if ( IsModifiedClick("SPLITSTACK") ) then
+	if ( not CursorHasItem() and IsModifiedClick("SPLITSTACK") ) then
 		local texture, itemCount, locked = GetContainerItemInfo(self:GetParent():GetID(), self:GetID());
 		if ( not locked and itemCount and itemCount > 1) then
 			self.SplitStack = function(button, split)
